@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Route Compare — Itinéraires plafonnés</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <!-- app.js doit s'exécuter AVANT Alpine pour enregistrer les composants via alpine:init -->
+  <script src="/storage.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body x-data="routeApp" x-init="init()">
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<header>
+  <h1>Route Compare</h1>
+
+  <div class="vehicle-selector">
+    <label for="vehicle-select" style="font-size:.8125rem;color:#4b5563">Véhicule :</label>
+    <select id="vehicle-select" x-model="selectedVehicleId" @change="onVehicleChange()">
+      <option value="">— aucun —</option>
+      <template x-for="v in vehicles" :key="v.id">
+        <option :value="v.id" x-text="v.name"></option>
+      </template>
+    </select>
+    <button class="btn btn-ghost btn-sm" @click="openNewVehicle()" title="Nouveau véhicule">+</button>
+  </div>
+
+  <div class="settings-menu">
+    <button class="btn btn-ghost btn-sm" @click="showSettings = !showSettings" title="Paramètres">⚙️</button>
+    <div class="settings-dropdown" x-show="showSettings" @click.outside="showSettings = false">
+      <button @click="exportData()">Exporter mes données</button>
+      <button @click="showImportInput = true; showSettings = false">Importer</button>
+      <div class="divider"></div>
+      <button @click="clearHistory(); showSettings = false">Effacer l'historique</button>
+    </div>
+  </div>
+
+  <!-- Input fichier import (caché) -->
+  <input type="file" accept=".json" id="import-file" style="display:none"
+    x-show="showImportInput" @change="importData($event)" />
+  <template x-if="showImportInput">
+    <div style="display:none" x-init="document.getElementById('import-file').click()"></div>
+  </template>
+</header>
+
+<!-- ── Layout principal ─────────────────────────────────────────────────── -->
+<div class="layout">
+
+  <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <!-- Formulaire de recherche -->
+    <section class="search-form">
+      <h2>Comparer des itinéraires</h2>
+
+      <!-- Départ -->
+      <div class="field">
+        <label>Départ</label>
+        <div class="autocomplete-wrapper">
+          <input type="text" x-model="origin" @input.debounce.400ms="onOriginInput()"
+            placeholder="ex : Annecy" autocomplete="off" />
+          <div class="autocomplete-results" x-show="originSuggestions.length > 0">
+            <template x-for="item in originSuggestions" :key="item.place_id">
+              <div class="autocomplete-item" @click="selectOrigin(item)" x-text="item.display_name"></div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Destination -->
+      <div class="field">
+        <label>Destination</label>
+        <div class="autocomplete-wrapper">
+          <input type="text" x-model="destination" @input.debounce.400ms="onDestInput()"
+            placeholder="ex : Noirmoutier" autocomplete="off" />
+          <div class="autocomplete-results" x-show="destSuggestions.length > 0">
+            <template x-for="item in destSuggestions" :key="item.place_id">
+              <div class="autocomplete-item" @click="selectDest(item)" x-text="item.display_name"></div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vitesse max -->
+      <div class="field">
+        <div class="speed-display">
+          <label>Vitesse maximale</label>
+          <span class="speed-value" x-text="maxSpeed + ' km/h'"></span>
+        </div>
+        <input type="range" min="70" max="130" step="10" x-model.number="maxSpeed"
+          @change="onSpeedChange()" />
+      </div>
+
+      <!-- Paramètres véhicule (lecture seule si véhicule sélectionné) -->
+      <template x-if="!selectedVehicleId">
+        <div>
+          <div class="field">
+            <label>Conso à 90 km/h (L/100km)</label>
+            <input type="number" min="2" max="25" step="0.1" x-model.number="manualConsumption" value="6.5" />
+          </div>
+          <div class="field">
+            <label>Prix carburant (€/L)</label>
+            <input type="number" min="0.5" max="5" step="0.01" x-model.number="manualFuelPrice" value="1.75" />
+          </div>
+        </div>
+      </template>
+      <template x-if="selectedVehicleId && currentVehicle">
+        <p style="font-size:.8125rem;color:#6b7280;margin-bottom:.75rem">
+          <span x-text="currentVehicle.consumption_l_per_100 + ' L/100 · '"></span>
+          <span x-text="currentVehicle.fuel_price + ' €/L'"></span>
+          <button class="btn btn-ghost btn-sm" @click="editVehicle(currentVehicle)" style="margin-left:.5rem">Modifier</button>
+        </p>
+      </template>
+
+      <button class="btn btn-primary" @click="compare()" :disabled="loading">
+        <span x-show="loading" class="spinner"></span>
+        <span x-show="!loading">Comparer</span>
+        <span x-show="loading">Calcul en cours…</span>
+      </button>
+    </section>
+
+    <!-- Erreur -->
+    <div class="error-box" x-show="error" x-text="error"></div>
+
+    <!-- Résultats -->
+    <section class="results" x-show="routes.length > 0">
+
+      <!-- Narration LLM -->
+      <div class="narrator-box" x-show="narratorText || narratorLoading"
+        :class="{ loading: narratorLoading }">
+        <span x-show="narratorLoading && !narratorText" class="spinner"></span>
+        <span x-text="narratorText"></span>
+      </div>
+
+      <!-- Cartes de résultats -->
+      <template x-for="(route, i) in routes" :key="route.preset">
+        <div class="route-card" :class="{ best: i === 0 }">
+          <div class="route-header">
+            <span class="route-label" x-text="route.label"></span>
+            <span x-show="i === 0" class="badge badge-best">Meilleur</span>
+            <span class="route-cost" x-text="route.cost.total_eur.toFixed(0) + ' €'"></span>
+          </div>
+
+          <div class="route-stats">
+            <div class="stat">
+              <div class="stat-value" x-text="route.distance_km.toFixed(0) + ' km'"></div>
+              <div class="stat-label">Distance</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value" x-text="formatDuration(route.duration_min)"></div>
+              <div class="stat-label">Durée</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value" x-text="route.avg_speed_kmh.toFixed(0) + ' km/h'"></div>
+              <div class="stat-label">Vitesse moy.</div>
+            </div>
+          </div>
+
+          <div class="route-detail">
+            <span x-text="route.cost.fuel_liters.toFixed(1) + ' L carburant → ' + route.cost.fuel_eur.toFixed(2) + ' €'"></span>
+            <span>·</span>
+            <span
+              data-tooltip="Estimation ±20% basée sur km à péage × 0,10 €/km">
+              Péages : <span x-text="route.cost.toll_eur.toFixed(2) + ' €'"></span>
+              <span class="badge badge-estimate">estimé</span>
+            </span>
+          </div>
+
+          <!-- Villes étapes -->
+          <div class="waypoints" x-show="route.waypoint_cities?.length > 0">
+            <strong>Via : </strong>
+            <span x-text="route.waypoint_cities.map(c => c.name).join(' → ')"></span>
+          </div>
+
+          <!-- Boutons navigation -->
+          <div class="nav-buttons">
+            <a class="btn-nav waze" :href="route.export.waze" target="_blank" rel="noopener"
+              :data-tooltip="'Vérifiez que Waze passe par : ' + (route.waypoint_cities?.map(c=>c.name).join(', ') || 'les villes listées')">
+              Waze
+            </a>
+            <a class="btn-nav gmaps" :href="route.export.google_maps" target="_blank" rel="noopener">
+              Google Maps
+            </a>
+            <template x-if="showAppleMaps()">
+              <a class="btn-nav apple" :href="route.export.apple_maps" target="_blank" rel="noopener">
+                Apple Plans
+              </a>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- Historique -->
+    <section class="history-section" x-show="historyItems.length > 0">
+      <h3>
+        Recherches récentes
+        <button class="btn btn-ghost btn-sm" @click="showHistory = !showHistory"
+          x-text="showHistory ? '−' : '+'"></button>
+      </h3>
+      <div x-show="showHistory">
+        <template x-for="item in historyItems" :key="item.id">
+          <div class="history-item" @click="replaySearch(item)">
+            <div class="history-item-info">
+              <div class="history-route"
+                x-text="item.from.label.split(',')[0] + ' → ' + item.to.label.split(',')[0]"></div>
+              <div class="history-meta">
+                <span x-text="item.max_speed + ' km/h'"></span> ·
+                <span x-text="item.result_summary?.best_cost_eur?.toFixed(0) + ' €'"></span> ·
+                <span x-text="timeAgo(item.timestamp)"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ── Carte ──────────────────────────────────────────────────────────── -->
+  <div id="map"></div>
+
+</div>
+
+<!-- ── Modal véhicule ───────────────────────────────────────────────────── -->
+<div class="modal-backdrop" x-show="showVehicleModal" @click.self="showVehicleModal = false">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 x-text="editingVehicle ? 'Modifier le véhicule' : 'Nouveau véhicule'"></h2>
+      <button class="btn btn-ghost btn-sm" @click="showVehicleModal = false">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Nom</label>
+        <input type="text" x-model="vehicleForm.name" placeholder="ex : Berline diesel" />
+      </div>
+      <div class="field">
+        <label>Type de carburant</label>
+        <select x-model="vehicleForm.fuel_type">
+          <option value="essence">Essence</option>
+          <option value="diesel">Diesel</option>
+          <option value="e85">E85</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Consommation à 90 km/h (L/100km)</label>
+        <input type="number" min="2" max="25" step="0.1" x-model.number="vehicleForm.consumption_l_per_100" />
+      </div>
+      <div class="field">
+        <label>Prix du carburant (€/L)</label>
+        <input type="number" min="0.5" max="5" step="0.01" x-model.number="vehicleForm.fuel_price" />
+      </div>
+      <div class="field">
+        <label>Vitesse max préférée (km/h)</label>
+        <input type="number" min="70" max="130" step="10" x-model.number="vehicleForm.preferred_max_speed" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <template x-if="editingVehicle">
+        <button class="btn btn-danger btn-sm" @click="deleteVehicle(editingVehicle.id); showVehicleModal = false">
+          Supprimer
+        </button>
+      </template>
+      <button class="btn btn-ghost btn-sm" @click="showVehicleModal = false">Annuler</button>
+      <button class="btn btn-primary btn-sm" @click="saveVehicle()"
+        :disabled="!vehicleForm.name">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal onboarding ─────────────────────────────────────────────────── -->
+<div class="modal-backdrop" x-show="showOnboarding">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Bienvenue sur Route Compare</h2>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:1rem;font-size:.9375rem;line-height:1.6">
+        Pour calculer les coûts carburant, créez votre premier profil véhicule ou utilisez les valeurs par défaut.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" @click="showOnboarding = false">Plus tard</button>
+      <button class="btn btn-ghost btn-sm" @click="openNewVehicle(); showOnboarding = false">
+        Créer mon véhicule
+      </button>
+      <button class="btn btn-primary btn-sm" @click="createDefaultVehicle()">
+        Utiliser les valeurs par défaut
+      </button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
