@@ -1,6 +1,5 @@
 """Point d'entrée FastAPI — Route Compare."""
 
-import asyncio
 import os as _os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
