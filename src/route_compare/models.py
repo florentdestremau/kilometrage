@@ -30,7 +30,7 @@ class CostBreakdown(BaseModel):
     toll_eur: float
     toll_km: float
     total_eur: float
-    toll_confidence: Literal["estimated"] = "estimated"
+    toll_confidence: Literal["estimated", "exact"] = "estimated"
 
 
 class WaypointCity(BaseModel):

@@ -41,6 +41,14 @@ def test_health(client):
     assert resp.json()["status"] == "ok"
 
 
+TOLLGURU_RESPONSE = {
+    "route": {
+        "costs": {"tagAndCash": 12.50, "minimumTollCost": 12.50},
+        "hasTolls": True,
+    }
+}
+
+
 def test_compare_success(client):
     with respx.mock:
         # Géocodage
@@ -50,11 +58,15 @@ def test_compare_success(client):
                 httpx.Response(200, json=GEOCODE_NOIRMOUTIER),
             ]
         )
-        # Routes (3 presets)
+        # Routes Graphhopper
         respx.post("https://graphhopper.com/api/1/route").mock(
             return_value=httpx.Response(200, json=ROUTE_RESPONSE)
         )
-        # Nominatim (waypoints) — retourne une ville générique
+        # TollGuru
+        respx.post("https://apis.tollguru.com/toll/v2/complete-polyline-from-mapping-service").mock(
+            return_value=httpx.Response(200, json=TOLLGURU_RESPONSE)
+        )
+        # Nominatim (waypoints)
         respx.get("https://nominatim.openstreetmap.org/reverse").mock(
             return_value=httpx.Response(200, json={
                 "name": "Lyon",
@@ -78,6 +90,7 @@ def test_compare_success(client):
     route = data["routes"][0]
     assert route["distance_km"] > 0
     assert route["cost"]["total_eur"] > 0
+    assert route["cost"]["toll_confidence"] in ("exact", "estimated")
     assert "export" in route
 
 

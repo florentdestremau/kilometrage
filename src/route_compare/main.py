@@ -14,6 +14,7 @@ from slowapi.util import get_remote_address
 
 from route_compare.config import settings
 from route_compare.cost.fuel import capped_duration_min, parse_segments_from_path, total_fuel
+from route_compare.cost.tollguru import TollGuruClient
 from route_compare.cost.tolls import toll_km_and_cost
 from route_compare.export.deep_links import apple_maps_url, google_maps_url, waze_url
 from route_compare.export.waypoints import extract_waypoint_cities
@@ -37,16 +38,21 @@ log = structlog.get_logger()
 
 limiter = Limiter(key_func=get_remote_address)
 _gh_client: GraphhopperClient | None = None
+_tg_client: TollGuruClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _gh_client
+    global _gh_client, _tg_client
     _gh_client = GraphhopperClient()
+    _tg_client = TollGuruClient()
+    await _tg_client.setup()
     log.info("app.startup")
     yield
     if _gh_client:
         await _gh_client.aclose()
+    if _tg_client:
+        await _tg_client.aclose()
     log.info("app.shutdown")
 
 
@@ -73,6 +79,7 @@ async def health() -> dict[str, str]:
 @limiter.limit("10/minute")
 async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
     gh = _gh_client
+    tg = _tg_client
     if gh is None:
         raise HTTPException(503, "Service non disponible")
 
@@ -110,9 +117,18 @@ async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
 
         fuel_liters = total_fuel(segments, body.fuel_consumption_l_per_100)
         fuel_eur = fuel_liters * body.fuel_price
-        toll_km, toll_eur = toll_km_and_cost(segments)
+        toll_km, toll_eur_est = toll_km_and_cost(segments)
 
         coords: list[list[float]] = path.get("points", {}).get("coordinates", [])
+
+        # Péage TollGuru (précis) avec fallback sur l'estimation heuristique
+        if tg is not None:
+            toll_eur, toll_confidence = await tg.get_toll_cost(coords)
+            if toll_confidence == "estimated":
+                toll_eur = toll_eur_est
+        else:
+            toll_eur, toll_confidence = toll_eur_est, "estimated"
+
         waypoints = await extract_waypoint_cities(coords, distance_km)
 
         export = ExportLinks(
@@ -134,6 +150,7 @@ async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
                     toll_eur=round(toll_eur, 2),
                     toll_km=round(toll_km, 1),
                     total_eur=round(fuel_eur + toll_eur, 2),
+                    toll_confidence=toll_confidence,
                 ),
                 waypoint_cities=waypoints,
                 export=export,
