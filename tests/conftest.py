@@ -1,4 +1,5 @@
 import os
+
 import pytest
 
 # Clés factices pour les tests (les appels HTTP sont mockés par respx)

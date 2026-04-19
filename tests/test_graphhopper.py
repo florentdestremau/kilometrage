@@ -1,14 +1,12 @@
+import httpx
 import pytest
 import respx
-import httpx
 
 from route_compare.routing.graphhopper import (
     GraphhopperClient,
-    GraphhopperError,
     QuotaExceededError,
     RouteNotFoundError,
 )
-
 
 SAMPLE_ROUTE_RESPONSE = {
     "paths": [

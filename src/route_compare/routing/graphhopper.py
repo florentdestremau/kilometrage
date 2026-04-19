@@ -118,7 +118,9 @@ class GraphhopperClient:
     def _cache_key(
         self, points: list[tuple[float, float]], custom_model: dict, vehicle: str
     ) -> str:
-        data = json.dumps({"points": points, "model": custom_model, "vehicle": vehicle}, sort_keys=True)
+        data = json.dumps(
+            {"points": points, "model": custom_model, "vehicle": vehicle}, sort_keys=True
+        )
         return hashlib.sha256(data.encode()).hexdigest()
 
     def _store_cache(self, key: str, value: Any) -> None:

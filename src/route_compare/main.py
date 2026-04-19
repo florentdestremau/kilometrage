@@ -1,12 +1,13 @@
 """Point d'entrée FastAPI — Route Compare."""
 
 import asyncio
+import os as _os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -31,7 +32,6 @@ from route_compare.routing.custom_models import PRESETS
 from route_compare.routing.graphhopper import (
     GraphhopperClient,
     GraphhopperError,
-    QuotaExceededError,
     RouteNotFoundError,
 )
 
@@ -102,7 +102,7 @@ async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
 
     routes: list[RouteResult] = []
 
-    for (preset_id, (label, _)), result in zip(PRESETS.items(), preset_results):
+    for (preset_id, (label, _)), result in zip(PRESETS.items(), preset_results, strict=False):
         if isinstance(result, Exception):
             log.warning("preset.failed", preset=preset_id, error=str(result))
             continue
@@ -203,8 +203,6 @@ async def narrate_post(
 
 
 # Servir les fichiers statiques
-import os as _os
-
 _static_dir = _os.path.join(_os.path.dirname(__file__), "static")
 if _os.path.isdir(_static_dir):
     app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")

@@ -1,8 +1,8 @@
 """Tests de l'endpoint /compare via TestClient FastAPI."""
 
+import httpx
 import pytest
 import respx
-import httpx
 from fastapi.testclient import TestClient
 
 from route_compare.main import app

@@ -78,7 +78,8 @@ def _cache_store(lat: float, lng: float, name: str, population: int, importance:
     try:
         conn = sqlite3.connect(_db_path())
         conn.execute(
-            "INSERT OR REPLACE INTO city_cache (lat_r, lng_r, name, population, importance) VALUES (?,?,?,?,?)",
+            "INSERT OR REPLACE INTO city_cache"
+            " (lat_r, lng_r, name, population, importance) VALUES (?,?,?,?,?)",
             (_round2(lat), _round2(lng), name, population, importance),
         )
         conn.commit()

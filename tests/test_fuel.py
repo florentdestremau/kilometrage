@@ -1,3 +1,5 @@
+import pytest
+
 from route_compare.cost.fuel import consumption_factor, segment_liters, total_fuel
 from route_compare.models import Segment
 
@@ -42,6 +44,3 @@ def test_total_fuel_two_segments():
     # 100 km à 90 → 6.5 L ; 100 km à 110 → 6.5 * 1.2 = 7.8 L
     result = total_fuel(segments, 6.5)
     assert result == pytest.approx(6.5 + 7.8)
-
-
-import pytest
