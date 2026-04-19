@@ -125,8 +125,10 @@ def _build_interval_map(details: list) -> dict[tuple[int, int], object]:
 def _speed_from_interval(
     speed_map: dict[tuple[int, int], object], start: int, end: int
 ) -> float | None:
+    # Cherche l'intervalle qui contient le point médian du segment
+    mid = (start + end) // 2
     for (s, e), val in speed_map.items():
-        if s <= start and e >= end and isinstance(val, int | float):
+        if s <= mid < e and isinstance(val, int | float):
             return float(val)
     return None
 
@@ -134,9 +136,12 @@ def _speed_from_interval(
 def _toll_from_interval(
     toll_map: dict[tuple[int, int], object], start: int, end: int
 ) -> bool:
+    # Utilise le point médian : évite le problème des segments road_class qui
+    # chevauchent plusieurs intervalles toll (ex: [96, 3708] sur Paris→Lyon).
+    mid = (start + end) // 2
     for (s, e), val in toll_map.items():
-        if s <= start and e >= end:
-            return val not in ("NO", None, "")
+        if s <= mid < e:
+            return str(val).lower() not in ("no", "none", "")
     return False
 
 
