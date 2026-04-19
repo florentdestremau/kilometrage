@@ -81,6 +81,9 @@ document.addEventListener('alpine:init', () => {
     // Onboarding
     showOnboarding: false,
 
+    // Cache
+    lastResultId: null,
+
     init() {
       this.vehicles = window.storage.vehicles.list();
       this.historyItems = window.storage.history.list();
@@ -93,7 +96,29 @@ document.addEventListener('alpine:init', () => {
         this.showOnboarding = true;
       }
 
+      // Restaurer le dernier résultat sans recalcul
+      const lastId = prefs.last_result_id;
+      if (lastId) {
+        const cached = window.storage.results.get(lastId);
+        if (cached) {
+          this._applyResult(cached.data);
+          // Pré-remplir le formulaire avec les valeurs de la recherche
+          const entry = this.historyItems.find(h => h.id === lastId);
+          if (entry) {
+            this.origin = entry.from.label;
+            this.destination = entry.to.label;
+            this.maxSpeed = entry.max_speed;
+          }
+        }
+      }
+
       this.$nextTick(() => this._initMap());
+    },
+
+    _applyResult(data) {
+      this.routes = data.routes;
+      this.narratorAvailable = data.narrator_available;
+      this.$nextTick(() => this._drawRoutes(this.routes));
     },
 
     // ── Map ────────────────────────────────────────────────────────────────
@@ -261,10 +286,10 @@ document.addEventListener('alpine:init', () => {
 
         this._drawRoutes(this.routes);
 
-        // Sauvegarder dans l'historique
+        // Sauvegarder dans l'historique + résultat complet
         if (this.routes.length > 0) {
           const best = this.routes[0];
-          window.storage.history.add({
+          const entry = window.storage.history.add({
             from: { label: this.origin, lat: this.originCoord?.lat, lng: this.originCoord?.lng },
             to: { label: this.destination, lat: this.destCoord?.lat, lng: this.destCoord?.lng },
             max_speed: this.maxSpeed,
@@ -276,6 +301,12 @@ document.addEventListener('alpine:init', () => {
             },
           });
           this.historyItems = window.storage.history.list();
+
+          if (entry) {
+            window.storage.results.save(entry.id, data);
+            window.storage.prefs.update({ last_result_id: entry.id });
+            this.lastResultId = entry.id;
+          }
         }
 
         // Narration LLM
@@ -329,6 +360,18 @@ document.addEventListener('alpine:init', () => {
       this.maxSpeed = item.max_speed;
       this.originCoord = item.from;
       this.destCoord = item.to;
+      this.error = null;
+      this.narratorText = '';
+
+      // Afficher depuis le cache localStorage si disponible
+      const cached = window.storage.results.get(item.id);
+      if (cached) {
+        this._applyResult(cached.data);
+        window.storage.prefs.update({ last_result_id: item.id });
+        return;
+      }
+
+      // Sinon recalcul
       this.compare();
     },
 

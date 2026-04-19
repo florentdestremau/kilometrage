@@ -7,6 +7,7 @@
 const SCHEMA_VERSION = 1;
 const PREFIX = 'rc:';
 const HISTORY_MAX = 20;
+const RESULTS_MAX = 10;    // résultats complets (géométrie + coûts) conservés
 const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 min
 
 function key(name) {
@@ -96,7 +97,7 @@ const history = {
       s.max_speed === search.max_speed &&
       now - new Date(s.timestamp).getTime() < DEDUP_WINDOW_MS
     );
-    if (isDupe) return;
+    if (isDupe) return null;
 
     const entry = {
       ...search,
@@ -105,6 +106,7 @@ const history = {
     };
     all.unshift(entry);
     safeSet(key('history'), all.slice(0, HISTORY_MAX));
+    return entry;
   },
 
   clear() {
@@ -130,6 +132,37 @@ const prefs = {
   update(partial) {
     const current = this.get();
     safeSet(key('prefs'), { ...current, ...partial });
+  },
+};
+
+// ── Results cache ──────────────────────────────────────────────────────────
+// Stocke la réponse complète de /compare (avec géométrie) par historyId.
+const results = {
+  get(historyId) {
+    const map = safeGet(key('results')) || {};
+    return map[historyId] || null;
+  },
+
+  save(historyId, data) {
+    const map = safeGet(key('results')) || {};
+    map[historyId] = { data, saved_at: new Date().toISOString() };
+    // Garder seulement les RESULTS_MAX entrées les plus récentes
+    const entries = Object.entries(map)
+      .sort((a, b) => new Date(b[1].saved_at) - new Date(a[1].saved_at))
+      .slice(0, RESULTS_MAX);
+    safeSet(key('results'), Object.fromEntries(entries));
+  },
+
+  deleteOrphans(validIds) {
+    const map = safeGet(key('results')) || {};
+    for (const id of Object.keys(map)) {
+      if (!validIds.has(id)) delete map[id];
+    }
+    safeSet(key('results'), map);
+  },
+
+  clear() {
+    localStorage.removeItem(key('results'));
   },
 };
 
@@ -163,4 +196,4 @@ function importData(json) {
   if (data.prefs) safeSet(key('prefs'), data.prefs);
 }
 
-window.storage = { vehicles, history, prefs, exportData, importData };
+window.storage = { vehicles, history, results, prefs, exportData, importData };
