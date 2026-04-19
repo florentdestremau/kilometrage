@@ -52,25 +52,26 @@ class GraphhopperClient:
     async def route(
         self,
         points: list[tuple[float, float]],
-        custom_model: dict,
         vehicle: str = "car",
-    ) -> dict:
+        max_alternatives: int = 3,
+    ) -> list[dict]:
         """
-        Lance un calcul d'itinéraire Graphhopper.
+        Retourne jusqu'à max_alternatives itinéraires différents.
 
-        Retourne le premier itinéraire (paths[0]) ou lève une exception.
-        Utilise un cache en mémoire (LRU, taille configurable).
+        Utilise algorithm=alternative_route : Graphhopper retourne des routes
+        genuinement différentes (péages variables) sans forcer d'évitement.
+        Compatible avec le tier gratuit (mode CH).
         """
-        cache_key = self._cache_key(points, custom_model, vehicle)
+        cache_key = self._cache_key(points, {"max_alt": max_alternatives}, vehicle)
         if cache_key in self._cache:
             log.debug("graphhopper.cache_hit", key=cache_key[:8])
             return self._cache[cache_key]
 
-        payload = {
+        payload: dict = {
             "points": [[lng, lat] for lat, lng in points],
             "profile": vehicle,
-            "custom_model": custom_model,
-            "ch.disable": True,  # requis pour custom_model
+            "algorithm": "alternative_route",
+            "alt_route.max_paths": max_alternatives,
             "points_encoded": False,
             "details": ["road_class", "toll", "max_speed"],
             "instructions": False,
@@ -92,9 +93,8 @@ class GraphhopperClient:
         if not paths:
             raise RouteNotFoundError("Aucun itinéraire trouvé entre ces deux points")
 
-        result = paths[0]
-        self._store_cache(cache_key, result)
-        return result
+        self._store_cache(cache_key, paths)
+        return paths
 
     def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.status_code == 200:
@@ -116,10 +116,10 @@ class GraphhopperClient:
         raise GraphhopperError(f"Erreur Graphhopper {resp.status_code} : {message}")
 
     def _cache_key(
-        self, points: list[tuple[float, float]], custom_model: dict, vehicle: str
+        self, points: list[tuple[float, float]], route_params: dict, vehicle: str
     ) -> str:
         data = json.dumps(
-            {"points": points, "model": custom_model, "vehicle": vehicle}, sort_keys=True
+            {"points": points, "params": route_params, "vehicle": vehicle}, sort_keys=True
         )
         return hashlib.sha256(data.encode()).hexdigest()
 

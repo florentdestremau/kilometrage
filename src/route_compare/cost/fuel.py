@@ -39,6 +39,21 @@ def total_fuel(
     )
 
 
+def capped_duration_min(segments: list[Segment], max_speed: int) -> float:
+    """
+    Durée recalculée en appliquant un plafond de vitesse.
+
+    Pour chaque segment dont la vitesse dépasse max_speed,
+    on recalcule le temps : distance / max_speed.
+    """
+    total_s = 0.0
+    for s in segments:
+        effective = min(s.avg_speed_kmh, float(max_speed))
+        if effective > 0:
+            total_s += (s.distance_m / 1000.0 / effective) * 3600.0
+    return total_s / 60.0
+
+
 def parse_segments_from_path(path: dict) -> list[Segment]:
     """
     Extrait les segments depuis un chemin Graphhopper.

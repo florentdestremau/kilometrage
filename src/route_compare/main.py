@@ -14,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from route_compare.config import settings
-from route_compare.cost.fuel import parse_segments_from_path, total_fuel
+from route_compare.cost.fuel import capped_duration_min, parse_segments_from_path, total_fuel
 from route_compare.cost.tolls import toll_km_and_cost
 from route_compare.export.deep_links import apple_maps_url, google_maps_url, waze_url
 from route_compare.export.waypoints import extract_waypoint_cities
@@ -28,7 +28,6 @@ from route_compare.models import (
     RouteRequest,
     RouteResult,
 )
-from route_compare.routing.custom_models import PRESETS
 from route_compare.routing.graphhopper import (
     GraphhopperClient,
     GraphhopperError,
@@ -90,48 +89,42 @@ async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
     origin_coord = Coord(lat=origin_lat, lng=origin_lng)
     dest_coord = Coord(lat=dest_lat, lng=dest_lng)
 
-    # Calcul des 3 presets en parallèle
-    preset_tasks = {
-        preset_id: gh.route(
-            [(origin_lat, origin_lng), (dest_lat, dest_lng)],
-            build_fn(body.max_speed),
-        )
-        for preset_id, (_, build_fn) in PRESETS.items()
-    }
-    preset_results = await asyncio.gather(*preset_tasks.values(), return_exceptions=True)
+    # Un seul appel — Graphhopper retourne jusqu'à 3 alternatives genuinement différentes
+    try:
+        paths = await gh.route([(origin_lat, origin_lng), (dest_lat, dest_lng)])
+    except RouteNotFoundError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except GraphhopperError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
     routes: list[RouteResult] = []
 
-    for (preset_id, (label, _)), result in zip(PRESETS.items(), preset_results, strict=False):
-        if isinstance(result, Exception):
-            log.warning("preset.failed", preset=preset_id, error=str(result))
-            continue
-
-        path = result
+    for i, path in enumerate(paths):
+        preset_id = f"route_{i}"
         distance_km = path.get("distance", 0) / 1000
-        duration_min = path.get("time", 0) / 60_000
+        segments = parse_segments_from_path(path)
+
+        duration_min = capped_duration_min(segments, body.max_speed)
+        if duration_min == 0:
+            duration_min = path.get("time", 0) / 60_000
         avg_speed = distance_km / (duration_min / 60) if duration_min > 0 else 0
 
-        segments = parse_segments_from_path(path)
         fuel_liters = total_fuel(segments, body.fuel_consumption_l_per_100)
         fuel_eur = fuel_liters * body.fuel_price
         toll_km, toll_eur = toll_km_and_cost(segments)
 
-        # Villes étapes (en parallèle avec les autres presets)
         coords: list[list[float]] = path.get("points", {}).get("coordinates", [])
         waypoints = await extract_waypoint_cities(coords, distance_km)
 
-        # Deep links
-        avoid_params = ["tolls"] if preset_id == "avoid_tolls" else None
         export = ExportLinks(
             waze=waze_url(dest_coord),
-            google_maps=google_maps_url(origin_coord, dest_coord, avoid=avoid_params),
+            google_maps=google_maps_url(origin_coord, dest_coord),
             apple_maps=apple_maps_url(dest_coord),
         )
 
         routes.append(
             RouteResult(
-                label=label,
+                label="",  # labellisé après tri
                 preset=preset_id,
                 distance_km=round(distance_km, 1),
                 duration_min=round(duration_min, 0),
@@ -152,7 +145,11 @@ async def compare(request: Request, body: RouteRequest) -> ComparisonResponse:
     if not routes:
         raise HTTPException(503, "Aucun itinéraire calculé. Vérifiez les adresses saisies.")
 
-    routes.sort(key=lambda r: r.cost.total_eur)
+    # Tri : le plus rapide d'abord, puis les alternatives
+    routes.sort(key=lambda r: r.duration_min)
+    _labels = ["Le plus rapide", "Alternative 1", "Alternative 2"]
+    for idx, route in enumerate(routes):
+        route.label = _labels[idx] if idx < len(_labels) else f"Alternative {idx}"
 
     return ComparisonResponse(
         origin=body.origin,

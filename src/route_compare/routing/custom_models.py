@@ -1,75 +1,29 @@
 """
-Presets de custom_model Graphhopper.
+Presets d'itinéraires Graphhopper compatibles avec le tier gratuit.
 
-Chaque preset définit des règles de vitesse et/ou de priorité appliquées
-sur certaines catégories de routes (road_class).
-
-Référence Graphhopper : https://docs.graphhopper.com/latest/custom-models/
+Le tier gratuit ne supporte pas custom_model (mode flexible).
+On utilise le paramètre `avoid` (standard) et on recalcule la durée
+avec le plafond de vitesse en post-traitement dans main.py.
 """
 
 
 def max_speed_preset(max_speed: int) -> dict:
-    """Plafonne MOTORWAY et TRUNK à max_speed km/h."""
-    return {
-        "speed": [
-            {
-                "if": "road_class == MOTORWAY",
-                "limit_to": max_speed,
-            },
-            {
-                "if": "road_class == TRUNK",
-                "limit_to": max_speed,
-            },
-        ]
-    }
+    """Itinéraire le plus rapide (généralement par autoroute)."""
+    return {}
 
 
 def avoid_tolls_preset(max_speed: int) -> dict:
-    """Évite les routes à péage, plafonne quand même la vitesse."""
-    return {
-        "speed": [
-            {
-                "if": "road_class == MOTORWAY",
-                "limit_to": max_speed,
-            },
-            {
-                "if": "road_class == TRUNK",
-                "limit_to": max_speed,
-            },
-        ],
-        "priority": [
-            {
-                "if": "toll == ALL",
-                "multiply_by": "0",
-            },
-        ],
-    }
+    """Évite les routes à péage."""
+    return {"avoid": "toll"}
 
 
 def balanced_preset(max_speed: int) -> dict:
-    """Plafond vitesse + légère pénalité péages (compromis temps/coût)."""
-    return {
-        "speed": [
-            {
-                "if": "road_class == MOTORWAY",
-                "limit_to": max_speed,
-            },
-            {
-                "if": "road_class == TRUNK",
-                "limit_to": max_speed,
-            },
-        ],
-        "priority": [
-            {
-                "if": "toll == ALL",
-                "multiply_by": "0.8",
-            },
-        ],
-    }
+    """Évite les autoroutes — passe par les nationales."""
+    return {"avoid": "motorway"}
 
 
 PRESETS: dict[str, tuple[str, callable]] = {
     "motorway_capped": ("Autoroute plafonnée", max_speed_preset),
     "avoid_tolls": ("Sans péage", avoid_tolls_preset),
-    "balanced": ("Mixte économique", balanced_preset),
+    "balanced": ("Via nationales", balanced_preset),
 }

@@ -8,23 +8,21 @@ from route_compare.routing.graphhopper import (
     RouteNotFoundError,
 )
 
-SAMPLE_ROUTE_RESPONSE = {
-    "paths": [
-        {
-            "distance": 500000.0,
-            "time": 18000000,
-            "points": {
-                "type": "LineString",
-                "coordinates": [[6.12, 45.90], [2.35, 48.85]],
-            },
-            "details": {
-                "road_class": [[0, 1, "MOTORWAY"]],
-                "toll": [[0, 1, "ALL"]],
-                "max_speed": [[0, 1, 130]],
-            },
-        }
-    ]
+SAMPLE_PATH = {
+    "distance": 500000.0,
+    "time": 18000000,
+    "points": {
+        "type": "LineString",
+        "coordinates": [[6.12, 45.90], [2.35, 48.85]],
+    },
+    "details": {
+        "road_class": [[0, 1, "MOTORWAY"]],
+        "toll": [[0, 1, "ALL"]],
+        "max_speed": [[0, 1, 130]],
+    },
 }
+
+SAMPLE_ROUTE_RESPONSE = {"paths": [SAMPLE_PATH]}
 
 SAMPLE_GEOCODE_RESPONSE = {
     "hits": [{"point": {"lat": 45.899, "lng": 6.129}}]
@@ -42,11 +40,9 @@ async def test_route_success(client):
         respx.post("https://graphhopper.com/api/1/route").mock(
             return_value=httpx.Response(200, json=SAMPLE_ROUTE_RESPONSE)
         )
-        result = await client.route(
-            [(45.90, 6.12), (48.85, 2.35)],
-            custom_model={"speed": []},
-        )
-    assert result["distance"] == 500000.0
+        result = await client.route([(45.90, 6.12), (48.85, 2.35)])
+    assert isinstance(result, list)
+    assert result[0]["distance"] == 500000.0
     await client.aclose()
 
 
@@ -57,7 +53,7 @@ async def test_route_quota_exceeded(client):
             return_value=httpx.Response(429, json={"message": "rate limit"})
         )
         with pytest.raises(QuotaExceededError):
-            await client.route([(45.90, 6.12), (48.85, 2.35)], custom_model={})
+            await client.route([(45.90, 6.12), (48.85, 2.35)])
     await client.aclose()
 
 
@@ -68,7 +64,7 @@ async def test_route_not_found(client):
             return_value=httpx.Response(400, json={"message": "Cannot find point 0: 0.0,0.0"})
         )
         with pytest.raises(RouteNotFoundError):
-            await client.route([(0.0, 0.0), (48.85, 2.35)], custom_model={})
+            await client.route([(0.0, 0.0), (48.85, 2.35)])
     await client.aclose()
 
 
@@ -84,8 +80,8 @@ async def test_route_cache(client):
 
     with respx.mock:
         respx.post("https://graphhopper.com/api/1/route").mock(side_effect=handler)
-        await client.route([(45.90, 6.12), (48.85, 2.35)], custom_model={"speed": []})
-        await client.route([(45.90, 6.12), (48.85, 2.35)], custom_model={"speed": []})
+        await client.route([(45.90, 6.12), (48.85, 2.35)])
+        await client.route([(45.90, 6.12), (48.85, 2.35)])
 
     assert call_count == 1
     await client.aclose()
