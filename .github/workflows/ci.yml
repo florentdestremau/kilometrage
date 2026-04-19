@@ -35,8 +35,8 @@ jobs:
       - name: Tests
         run: uv run pytest tests/ -v
         env:
-          GRAPHHOPPER_API_KEY: ""
-          ANTHROPIC_API_KEY: ""
+          GRAPHHOPPER_API_KEY: "test-key"
+          ANTHROPIC_API_KEY: "test-key"
           STORAGE_DIR: "/tmp/test-storage"
 
   docker:
