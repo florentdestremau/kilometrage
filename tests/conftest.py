@@ -7,6 +7,8 @@ os.environ.setdefault("GRAPHHOPPER_API_KEY", "test-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "")
 os.environ.setdefault("STORAGE_DIR", "/tmp/test-storage-rc")
 
+os.makedirs("/tmp/test-storage-rc", exist_ok=True)
+
 
 @pytest.fixture
 def sample_path():

@@ -37,6 +37,8 @@ class TollGuruClient:
         self._ready = False
 
     async def setup(self) -> None:
+        import os
+        os.makedirs(settings.storage_dir, exist_ok=True)
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS toll_cache (
